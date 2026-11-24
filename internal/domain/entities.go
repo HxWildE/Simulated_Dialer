@@ -14,29 +14,38 @@ type Agent struct {
 	CurrentCallID *uuid.UUID `json:"current_call_id,omitempty"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	Version       int64      `json:"version"`
+	ShardID       int        `json:"shard_id"`
+	LeaseToken    int64      `json:"lease_token"`
 }
 
 // Borrower represents a debtor to be contacted.
 type Borrower struct {
-	ID          uuid.UUID     `json:"id"`
-	PhoneNumber string        `json:"phone_number"`
-	State       BorrowerState `json:"state"`
-	RetryCount  int           `json:"retry_count"`
-	NextRetryAt *time.Time    `json:"next_retry_at,omitempty"`
+	ID                     uuid.UUID     `json:"id"`
+	PhoneNumber            string        `json:"phone_number"`
+	State                  BorrowerState `json:"state"`
+	RetryCount             int           `json:"retry_count"`
+	NextRetryAt            *time.Time    `json:"next_retry_at,omitempty"`
+	ShardID                int           `json:"shard_id"`
+	Timezone               string        `json:"timezone"`
+	LastCalledAt           *time.Time    `json:"last_called_at,omitempty"`
+	CallAttemptsLast7Days  int           `json:"call_attempts_last_7_days"`
 }
 
 // Call represents an outbound dial attempt linking a borrower, an agent, and a provider.
 type Call struct {
-	ID             uuid.UUID  `json:"id"`
-	CampaignID     uuid.UUID  `json:"campaign_id"`
-	AgentID        *uuid.UUID `json:"agent_id,omitempty"`
-	BorrowerID     uuid.UUID  `json:"borrower_id"`
-	ProviderName   string     `json:"provider_name"`
-	ProviderCallID *string    `json:"provider_call_id,omitempty"`
-	State          CallState  `json:"state"`
-	WorkerID       *string    `json:"worker_id,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID               uuid.UUID  `json:"id"`
+	CampaignID       uuid.UUID  `json:"campaign_id"`
+	AgentID          *uuid.UUID `json:"agent_id,omitempty"`
+	BorrowerID       uuid.UUID  `json:"borrower_id"`
+	ProviderName     string     `json:"provider_name"`
+	ProviderCallID   *string    `json:"provider_call_id,omitempty"`
+	State            CallState  `json:"state"`
+	WorkerID         *string    `json:"worker_id,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	LeaseToken       int64      `json:"lease_token"`
+	IsMachine        bool       `json:"is_machine"`
+	CarrierLatencyMs int        `json:"carrier_latency_ms"`
 }
 
 // CallEvent is an immutable provider webhook or system event for idempotency and audits.

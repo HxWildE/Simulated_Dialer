@@ -15,6 +15,7 @@ This document is the definitive technical manual for **SmartDialer**, explaining
 8. [Understanding the Metrics: Scenarios, Failures & Load Test](#8-understanding-the-metrics-scenarios-failures--load-test)
 9. [Scale Analysis (100 -> 1,000 -> 10,000 -> 100,000 Agents)](#9-scale-analysis-100---1000---10000---100000-agents)
 10. [Top System Design & Technical Interview Questions & Answers](#10-top-system-design--technical-interview-questions--answers)
+11. [Enterprise Robustness Modules & Deep-Dive Documents](#11-enterprise-robustness-modules--deep-dive-documents)
 
 ---
 
@@ -430,3 +431,31 @@ The Safety Controller acts as an unbypassable circuit breaker between the Pacing
 ### Q5: What is the answer to the Final Architectural Question: How to get maximum predictive utilization while retaining deterministic progressive safety?
 **Answer:**
 Maximum predictive utilization with deterministic progressive safety is achieved by decoupling the **capacity discovery phase** from the **execution commitment boundary**: the statistical engine is permitted to forecast future capacity aggressively using Little’s Law and Erlang-inspired completion probability buffers, but every proposed dial must pass through a strict, zero-latency **Safety Controller** that treats progressive invariants ($N = \max(0, A_{\text{avail}} - C_{\text{inflight}})$) as a hard mathematical ceiling whenever rolling abandonment exceeds 2.0%, carrier error exceeds 25%, or agent disconnection shocks occur. By combining this non-bypassable safety gate with atomic PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED` reservations and monotonic state rankings that discard out-of-order telecom webhooks, the system achieves the high throughput of predictive over-dialing while guaranteeing that physical resource commitment never regresses or exceeds regulatory abandonment constraints.
+
+---
+
+## 11. Enterprise Robustness Modules & Deep-Dive Documents
+
+For in-depth analysis, mathematical proofs, and implementation guides on each of the platform's robustness upgrades, consult the dedicated module specifications:
+
+1. [**01. Sharded B-Tree Bucketing & PgBouncer High-Concurrency Layer**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/01_DATABASE_SHARDING_AND_PGBOUNCER.md)
+   - B-Tree leaf lock contention elimination via $N$-way shard bucketing (`shard_id`).
+   - PgBouncer transaction-mode compatibility with stateless transaction boundaries.
+2. [**02. Predictive Intelligence: 1D Kalman Filter & AMD Engine**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/02_KALMAN_FILTER_AND_AMD.md)
+   - Dynamic 1D Kalman filter tracking non-stationary answer rate variance ($R \propto 1/\sqrt{N}$).
+   - Answering Machine Detection (AMD) decision tree classifying human speech vs voicemail in $<2.5\text{s}$.
+3. [**03. Multi-Carrier Trunk Hedging & Dynamic Least-Cost Routing (LCR)**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/03_MULTI_CARRIER_LCR_AND_CIRCUIT_BREAKER.md)
+   - Dynamic Least-Cost Routing balancing wholesale rate cards.
+   - Concurrent trunk hedging on primary carrier setup delay ($>1200\text{ms}$) or SIP 503 drops.
+   - Adaptive per-trunk circuit breakers (`CLOSED` &rarr; `OPEN` &rarr; `HALF-OPEN`).
+4. [**04. Distributed Leases with Monotonic Fencing Tokens**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/04_DISTRIBUTED_LEASES_AND_FENCING_TOKENS.md)
+   - Elimination of split-brain double-allocations caused by zombie workers and GC pauses.
+   - Monotonic `lease_token BIGINT` incremented on every reservation and reaper reset.
+5. [**05. TCPA & Regulation F Compliance Gate**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/05_TCPA_AND_REGULATION_F_COMPLIANCE.md)
+   - Local IANA timezone calling window enforcement ($08:00\dots 21:00$ local debtor time).
+   - CFPB Regulation F (12 CFR § 1006.14) 7-in-7 weekly attempt cap and conversation wait period.
+   - High-throughput in-memory Do-Not-Call (DNC) Bloom filter scrubber.
+6. [**06. Observability: OpenTelemetry Distributed Tracing & Chaos Test Harness**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/06_OBSERVABILITY_TRACING_AND_CHAOS.md)
+   - Zero-dependency W3C `traceparent` context propagation across goroutines and carrier webhooks.
+   - Chaos engineering fault injector simulating network jitter, carrier 503s, and worker panics.
+

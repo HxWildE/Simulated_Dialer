@@ -96,6 +96,23 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_calls_campaign_state ON calls (campaign_id, state);
 	CREATE INDEX IF NOT EXISTS idx_call_events_call_id ON call_events (call_id);
 	CREATE INDEX IF NOT EXISTS idx_pacing_audit_campaign_ts ON pacing_audit_logs (campaign_id, timestamp DESC);
+
+	-- Robustness Upgrades: Sharding, Fencing Tokens & Compliance
+	ALTER TABLE agents ADD COLUMN IF NOT EXISTS shard_id INT NOT NULL DEFAULT 0;
+	ALTER TABLE agents ADD COLUMN IF NOT EXISTS lease_token BIGINT NOT NULL DEFAULT 1;
+
+	ALTER TABLE borrowers ADD COLUMN IF NOT EXISTS shard_id INT NOT NULL DEFAULT 0;
+	ALTER TABLE borrowers ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/New_York';
+	ALTER TABLE borrowers ADD COLUMN IF NOT EXISTS last_called_at TIMESTAMPTZ;
+	ALTER TABLE borrowers ADD COLUMN IF NOT EXISTS call_attempts_last_7_days INT NOT NULL DEFAULT 0;
+
+	ALTER TABLE calls ADD COLUMN IF NOT EXISTS lease_token BIGINT NOT NULL DEFAULT 1;
+	ALTER TABLE calls ADD COLUMN IF NOT EXISTS is_machine BOOLEAN NOT NULL DEFAULT FALSE;
+	ALTER TABLE calls ADD COLUMN IF NOT EXISTS carrier_latency_ms INT NOT NULL DEFAULT 0;
+
+	CREATE INDEX IF NOT EXISTS idx_agents_sharded_available ON agents (shard_id, state, updated_at ASC);
+	CREATE INDEX IF NOT EXISTS idx_borrowers_sharded_pending ON borrowers (shard_id, state, next_retry_at, id);
+	CREATE INDEX IF NOT EXISTS idx_borrowers_timezone ON borrowers (timezone, state);
 	`
 	_, err := s.pool.Exec(ctx, schema)
 	return err
@@ -107,91 +124,183 @@ func (s *PostgresStore) ReserveAgentAndBorrower(
 	campaignID uuid.UUID,
 	workerID, providerName string,
 ) (*domain.Call, *domain.Agent, *domain.Borrower, error) {
+	return s.ReserveAgentAndBorrowerSharded(ctx, campaignID, workerID, providerName, -1)
+}
+
+// ReserveAgentAndBorrowerSharded performs atomic multi-row reservation within a partition shard
+// to eliminate B-tree index leaf lock contention, assigning monotonic lease fencing tokens.
+func (s *PostgresStore) ReserveAgentAndBorrowerSharded(
+	ctx context.Context,
+	campaignID uuid.UUID,
+	workerID, providerName string,
+	shardID int,
+) (*domain.Call, *domain.Agent, *domain.Borrower, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	// 1. Lock 1 Available Agent
+	// 1. Lock 1 Available Agent (sharded query with global fallback)
 	var agent domain.Agent
-	agentRow := tx.QueryRow(ctx, `
-		SELECT id, name, state, current_call_id, updated_at, version
-		FROM agents
-		WHERE state = 'AVAILABLE'
-		ORDER BY updated_at ASC
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED;
-	`)
-	if err := agentRow.Scan(&agent.ID, &agent.Name, &agent.State, &agent.CurrentCallID, &agent.UpdatedAt, &agent.Version); err != nil {
+	var agentQuery string
+	var agentArgs []any
+
+	if shardID >= 0 {
+		agentQuery = `
+			SELECT id, name, state, current_call_id, updated_at, version, shard_id, lease_token
+			FROM agents
+			WHERE shard_id = $1 AND state = 'AVAILABLE'
+			ORDER BY updated_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED;
+		`
+		agentArgs = []any{shardID}
+	} else {
+		agentQuery = `
+			SELECT id, name, state, current_call_id, updated_at, version, shard_id, lease_token
+			FROM agents
+			WHERE state = 'AVAILABLE'
+			ORDER BY updated_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED;
+		`
+		agentArgs = []any{}
+	}
+
+	err = tx.QueryRow(ctx, agentQuery, agentArgs...).Scan(
+		&agent.ID, &agent.Name, &agent.State, &agent.CurrentCallID, &agent.UpdatedAt, &agent.Version, &agent.ShardID, &agent.LeaseToken,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && shardID >= 0 {
+			// Fallback: search across all shards to prevent idle starvation
+			err = tx.QueryRow(ctx, `
+				SELECT id, name, state, current_call_id, updated_at, version, shard_id, lease_token
+				FROM agents
+				WHERE state = 'AVAILABLE'
+				ORDER BY updated_at ASC
+				LIMIT 1
+				FOR UPDATE SKIP LOCKED;
+			`).Scan(&agent.ID, &agent.Name, &agent.State, &agent.CurrentCallID, &agent.UpdatedAt, &agent.Version, &agent.ShardID, &agent.LeaseToken)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, nil, ErrNoAvailableAgent
 		}
-		return nil, nil, nil, fmt.Errorf("failed to select available agent: %w", err)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to select available agent: %w", err)
+		}
 	}
 
-	// 2. Lock 1 Pending Borrower
+	// 2. Lock 1 Pending Borrower (sharded query with global fallback)
 	var borrower domain.Borrower
-	borrowerRow := tx.QueryRow(ctx, `
-		SELECT id, phone_number, state, retry_count, next_retry_at
-		FROM borrowers
-		WHERE state = 'PENDING'
-		  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-		ORDER BY id ASC
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED;
-	`)
-	if err := borrowerRow.Scan(&borrower.ID, &borrower.PhoneNumber, &borrower.State, &borrower.RetryCount, &borrower.NextRetryAt); err != nil {
+	var borrowerQuery string
+	var borrowerArgs []any
+
+	if shardID >= 0 {
+		borrowerQuery = `
+			SELECT id, phone_number, state, retry_count, next_retry_at, shard_id, timezone, last_called_at, call_attempts_last_7_days
+			FROM borrowers
+			WHERE shard_id = $1 AND state = 'PENDING'
+			  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+			ORDER BY id ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED;
+		`
+		borrowerArgs = []any{shardID}
+	} else {
+		borrowerQuery = `
+			SELECT id, phone_number, state, retry_count, next_retry_at, shard_id, timezone, last_called_at, call_attempts_last_7_days
+			FROM borrowers
+			WHERE state = 'PENDING'
+			  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+			ORDER BY id ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED;
+		`
+		borrowerArgs = []any{}
+	}
+
+	err = tx.QueryRow(ctx, borrowerQuery, borrowerArgs...).Scan(
+		&borrower.ID, &borrower.PhoneNumber, &borrower.State, &borrower.RetryCount, &borrower.NextRetryAt,
+		&borrower.ShardID, &borrower.Timezone, &borrower.LastCalledAt, &borrower.CallAttemptsLast7Days,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && shardID >= 0 {
+			// Fallback: search across all shards
+			err = tx.QueryRow(ctx, `
+				SELECT id, phone_number, state, retry_count, next_retry_at, shard_id, timezone, last_called_at, call_attempts_last_7_days
+				FROM borrowers
+				WHERE state = 'PENDING'
+				  AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+				ORDER BY id ASC
+				LIMIT 1
+				FOR UPDATE SKIP LOCKED;
+			`).Scan(
+				&borrower.ID, &borrower.PhoneNumber, &borrower.State, &borrower.RetryCount, &borrower.NextRetryAt,
+				&borrower.ShardID, &borrower.Timezone, &borrower.LastCalledAt, &borrower.CallAttemptsLast7Days,
+			)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, nil, ErrNoPendingBorrower
 		}
-		return nil, nil, nil, fmt.Errorf("failed to select pending borrower: %w", err)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to select pending borrower: %w", err)
+		}
 	}
 
 	callID := uuid.New()
+	newLeaseToken := agent.LeaseToken + 1
+
 	call := domain.Call{
-		ID:           callID,
-		CampaignID:   campaignID,
-		AgentID:      &agent.ID,
-		BorrowerID:   borrower.ID,
-		ProviderName: providerName,
-		State:        domain.CallReserved,
-		WorkerID:     &workerID,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:               callID,
+		CampaignID:       campaignID,
+		AgentID:          &agent.ID,
+		BorrowerID:       borrower.ID,
+		ProviderName:     providerName,
+		State:            domain.CallReserved,
+		WorkerID:         &workerID,
+		CreatedAt:        time.Now().UTC(),
+		UpdatedAt:        time.Now().UTC(),
+		LeaseToken:       newLeaseToken,
+		IsMachine:        false,
+		CarrierLatencyMs: 0,
 	}
 
-	// 3. Insert Call
+	// 3. Insert Call with lease_token
 	_, err = tx.Exec(ctx, `
-		INSERT INTO calls (id, campaign_id, agent_id, borrower_id, provider_name, state, worker_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-	`, call.ID, call.CampaignID, call.AgentID, call.BorrowerID, call.ProviderName, call.State, call.WorkerID, call.CreatedAt, call.UpdatedAt)
+		INSERT INTO calls (id, campaign_id, agent_id, borrower_id, provider_name, state, worker_id, created_at, updated_at, lease_token, is_machine, carrier_latency_ms)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+	`, call.ID, call.CampaignID, call.AgentID, call.BorrowerID, call.ProviderName, call.State, call.WorkerID, call.CreatedAt, call.UpdatedAt, call.LeaseToken, call.IsMachine, call.CarrierLatencyMs)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to insert call: %w", err)
 	}
 
-	// 4. Update Agent to RESERVED
-	_, err = tx.Exec(ctx, `
+	// 4. Update Agent to RESERVED and increment lease_token
+	err = tx.QueryRow(ctx, `
 		UPDATE agents
-		SET state = 'RESERVED', current_call_id = $1, updated_at = NOW(), version = version + 1
-		WHERE id = $2;
-	`, call.ID, agent.ID)
+		SET state = 'RESERVED', current_call_id = $1, updated_at = NOW(), version = version + 1, lease_token = lease_token + 1
+		WHERE id = $2
+		RETURNING lease_token;
+	`, call.ID, agent.ID).Scan(&agent.LeaseToken)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to update agent: %w", err)
 	}
 	agent.State = domain.AgentReserved
 	agent.CurrentCallID = &call.ID
 
-	// 5. Update Borrower to RESERVED
+	// 5. Update Borrower to RESERVED & increment call count
+	now := time.Now().UTC()
 	_, err = tx.Exec(ctx, `
 		UPDATE borrowers
-		SET state = 'RESERVED'
-		WHERE id = $1;
-	`, borrower.ID)
+		SET state = 'RESERVED', last_called_at = $1, call_attempts_last_7_days = call_attempts_last_7_days + 1
+		WHERE id = $2;
+	`, now, borrower.ID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to update borrower: %w", err)
 	}
 	borrower.State = domain.BorrowerReserved
+	borrower.LastCalledAt = &now
+	borrower.CallAttemptsLast7Days++
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to commit reservation: %w", err)
@@ -202,6 +311,12 @@ func (s *PostgresStore) ReserveAgentAndBorrower(
 
 // ProcessProviderEvent idempotently logs events and reconciles call/agent/borrower states.
 func (s *PostgresStore) ProcessProviderEvent(ctx context.Context, event domain.CallEvent) error {
+	return s.ProcessProviderEventWithFencing(ctx, event, 0)
+}
+
+// ProcessProviderEventWithFencing idempotently logs events, checks monotonic fencing tokens to prevent
+// split-brain overwrites from delayed workers, and reconciles state.
+func (s *PostgresStore) ProcessProviderEventWithFencing(ctx context.Context, event domain.CallEvent, expectedLeaseToken int64) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
@@ -237,17 +352,25 @@ func (s *PostgresStore) ProcessProviderEvent(ctx context.Context, event domain.C
 	// 2. Lock Call Row for Update
 	var call domain.Call
 	row := tx.QueryRow(ctx, `
-		SELECT id, campaign_id, agent_id, borrower_id, provider_name, provider_call_id, state, worker_id, created_at, updated_at
+		SELECT id, campaign_id, agent_id, borrower_id, provider_name, provider_call_id, state, worker_id, created_at, updated_at, lease_token, is_machine, carrier_latency_ms
 		FROM calls
 		WHERE id = $1
 		FOR UPDATE;
 	`, event.CallID)
 
-	if err := row.Scan(&call.ID, &call.CampaignID, &call.AgentID, &call.BorrowerID, &call.ProviderName, &call.ProviderCallID, &call.State, &call.WorkerID, &call.CreatedAt, &call.UpdatedAt); err != nil {
+	if err := row.Scan(
+		&call.ID, &call.CampaignID, &call.AgentID, &call.BorrowerID, &call.ProviderName, &call.ProviderCallID,
+		&call.State, &call.WorkerID, &call.CreatedAt, &call.UpdatedAt, &call.LeaseToken, &call.IsMachine, &call.CarrierLatencyMs,
+	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCallNotFound
 		}
 		return fmt.Errorf("failed to select call for update: %w", err)
+	}
+
+	// 2b. Monotonic Fencing Token check: prevents split-brain state modification by zombie workers
+	if expectedLeaseToken > 0 && call.LeaseToken != expectedLeaseToken {
+		return ErrStaleFencingToken
 	}
 
 	// 3. Map event type to target CallState
@@ -269,16 +392,42 @@ func (s *PostgresStore) ProcessProviderEvent(ctx context.Context, event domain.C
 	if val, ok := event.Payload["provider_call_id"].(string); ok && val != "" {
 		provCallID = &val
 	}
+	isMachine := call.IsMachine
+	if val, ok := event.Payload["is_machine"].(bool); ok {
+		isMachine = val
+	}
+	carrierLatency := call.CarrierLatencyMs
+	if val, ok := event.Payload["carrier_latency_ms"].(float64); ok {
+		carrierLatency = int(val)
+	}
 
-	_, err = tx.Exec(ctx, `
-		UPDATE calls
-		SET state = $1,
-		    provider_call_id = COALESCE($2, provider_call_id),
-		    updated_at = NOW()
-		WHERE id = $3;
-	`, nextState, provCallID, call.ID)
+	var tag pgconn.CommandTag
+	if expectedLeaseToken > 0 {
+		tag, err = tx.Exec(ctx, `
+			UPDATE calls
+			SET state = $1,
+			    provider_call_id = COALESCE($2, provider_call_id),
+			    is_machine = $3,
+			    carrier_latency_ms = $4,
+			    updated_at = NOW()
+			WHERE id = $5 AND lease_token = $6;
+		`, nextState, provCallID, isMachine, carrierLatency, call.ID, expectedLeaseToken)
+	} else {
+		tag, err = tx.Exec(ctx, `
+			UPDATE calls
+			SET state = $1,
+			    provider_call_id = COALESCE($2, provider_call_id),
+			    is_machine = $3,
+			    carrier_latency_ms = $4,
+			    updated_at = NOW()
+			WHERE id = $5;
+		`, nextState, provCallID, isMachine, carrierLatency, call.ID)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to update call state: %w", err)
+	}
+	if expectedLeaseToken > 0 && tag.RowsAffected() == 0 {
+		return ErrStaleFencingToken
 	}
 
 	// 5. Cascade state changes to Agent and Borrower
@@ -444,19 +593,26 @@ func (s *PostgresStore) GetPacingMetrics(ctx context.Context, campaignID uuid.UU
 	return metrics, nil
 }
 
-// CreateAgent inserts a new agent record.
+// CreateAgent inserts a new agent record with default shard.
 func (s *PostgresStore) CreateAgent(ctx context.Context, name string, state domain.AgentState) (*domain.Agent, error) {
+	return s.CreateAgentWithShard(ctx, name, state, 0)
+}
+
+// CreateAgentWithShard inserts a new agent record assigned to a specific concurrency shard.
+func (s *PostgresStore) CreateAgentWithShard(ctx context.Context, name string, state domain.AgentState, shardID int) (*domain.Agent, error) {
 	agent := &domain.Agent{
-		ID:        uuid.New(),
-		Name:      name,
-		State:     state,
-		UpdatedAt: time.Now().UTC(),
-		Version:   1,
+		ID:         uuid.New(),
+		Name:       name,
+		State:      state,
+		UpdatedAt:  time.Now().UTC(),
+		Version:    1,
+		ShardID:    shardID,
+		LeaseToken: 1,
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agents (id, name, state, updated_at, version)
-		VALUES ($1, $2, $3, $4, $5);
-	`, agent.ID, agent.Name, agent.State, agent.UpdatedAt, agent.Version)
+		INSERT INTO agents (id, name, state, updated_at, version, shard_id, lease_token)
+		VALUES ($1, $2, $3, $4, $5, $6, $7);
+	`, agent.ID, agent.Name, agent.State, agent.UpdatedAt, agent.Version, agent.ShardID, agent.LeaseToken)
 	if err != nil {
 		return nil, err
 	}
@@ -473,18 +629,29 @@ func (s *PostgresStore) SetAgentState(ctx context.Context, agentID uuid.UUID, st
 	return err
 }
 
-// CreateBorrower inserts a new borrower record.
+// CreateBorrower inserts a new borrower record with default compliance values.
 func (s *PostgresStore) CreateBorrower(ctx context.Context, phoneNumber string) (*domain.Borrower, error) {
+	return s.CreateBorrowerWithCompliance(ctx, phoneNumber, 0, "America/New_York")
+}
+
+// CreateBorrowerWithCompliance inserts a new borrower record with timezone and shard assignments.
+func (s *PostgresStore) CreateBorrowerWithCompliance(ctx context.Context, phoneNumber string, shardID int, timezone string) (*domain.Borrower, error) {
+	if timezone == "" {
+		timezone = "America/New_York"
+	}
 	b := &domain.Borrower{
-		ID:          uuid.New(),
-		PhoneNumber: phoneNumber,
-		State:       domain.BorrowerPending,
-		RetryCount:  0,
+		ID:                    uuid.New(),
+		PhoneNumber:           phoneNumber,
+		State:                 domain.BorrowerPending,
+		RetryCount:            0,
+		ShardID:               shardID,
+		Timezone:              timezone,
+		CallAttemptsLast7Days: 0,
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO borrowers (id, phone_number, state, retry_count)
-		VALUES ($1, $2, $3, $4);
-	`, b.ID, b.PhoneNumber, b.State, b.RetryCount)
+		INSERT INTO borrowers (id, phone_number, state, retry_count, shard_id, timezone, call_attempts_last_7_days)
+		VALUES ($1, $2, $3, $4, $5, $6, $7);
+	`, b.ID, b.PhoneNumber, b.State, b.RetryCount, b.ShardID, b.Timezone, b.CallAttemptsLast7Days)
 	if err != nil {
 		return nil, err
 	}
@@ -495,10 +662,10 @@ func (s *PostgresStore) CreateBorrower(ctx context.Context, phoneNumber string) 
 func (s *PostgresStore) GetAgent(ctx context.Context, id uuid.UUID) (*domain.Agent, error) {
 	var a domain.Agent
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, state, current_call_id, updated_at, version
+		SELECT id, name, state, current_call_id, updated_at, version, shard_id, lease_token
 		FROM agents
 		WHERE id = $1;
-	`, id).Scan(&a.ID, &a.Name, &a.State, &a.CurrentCallID, &a.UpdatedAt, &a.Version)
+	`, id).Scan(&a.ID, &a.Name, &a.State, &a.CurrentCallID, &a.UpdatedAt, &a.Version, &a.ShardID, &a.LeaseToken)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrAgentNotFound
@@ -512,10 +679,13 @@ func (s *PostgresStore) GetAgent(ctx context.Context, id uuid.UUID) (*domain.Age
 func (s *PostgresStore) GetCall(ctx context.Context, id uuid.UUID) (*domain.Call, error) {
 	var c domain.Call
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, campaign_id, agent_id, borrower_id, provider_name, provider_call_id, state, worker_id, created_at, updated_at
+		SELECT id, campaign_id, agent_id, borrower_id, provider_name, provider_call_id, state, worker_id, created_at, updated_at, lease_token, is_machine, carrier_latency_ms
 		FROM calls
 		WHERE id = $1;
-	`, id).Scan(&c.ID, &c.CampaignID, &c.AgentID, &c.BorrowerID, &c.ProviderName, &c.ProviderCallID, &c.State, &c.WorkerID, &c.CreatedAt, &c.UpdatedAt)
+	`, id).Scan(
+		&c.ID, &c.CampaignID, &c.AgentID, &c.BorrowerID, &c.ProviderName, &c.ProviderCallID,
+		&c.State, &c.WorkerID, &c.CreatedAt, &c.UpdatedAt, &c.LeaseToken, &c.IsMachine, &c.CarrierLatencyMs,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrCallNotFound
@@ -529,10 +699,13 @@ func (s *PostgresStore) GetCall(ctx context.Context, id uuid.UUID) (*domain.Call
 func (s *PostgresStore) GetBorrower(ctx context.Context, id uuid.UUID) (*domain.Borrower, error) {
 	var b domain.Borrower
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, phone_number, state, retry_count, next_retry_at
+		SELECT id, phone_number, state, retry_count, next_retry_at, shard_id, timezone, last_called_at, call_attempts_last_7_days
 		FROM borrowers
 		WHERE id = $1;
-	`, id).Scan(&b.ID, &b.PhoneNumber, &b.State, &b.RetryCount, &b.NextRetryAt)
+	`, id).Scan(
+		&b.ID, &b.PhoneNumber, &b.State, &b.RetryCount, &b.NextRetryAt,
+		&b.ShardID, &b.Timezone, &b.LastCalledAt, &b.CallAttemptsLast7Days,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrBorrowerNotFound
@@ -545,7 +718,7 @@ func (s *PostgresStore) GetBorrower(ctx context.Context, id uuid.UUID) (*domain.
 // GetStuckCalls finds orphaned calls exceeding safety durations.
 func (s *PostgresStore) GetStuckCalls(ctx context.Context, reservedTimeout, answeredTimeout time.Duration) ([]*domain.Call, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, campaign_id, agent_id, borrower_id, provider_name, provider_call_id, state, worker_id, created_at, updated_at
+		SELECT id, campaign_id, agent_id, borrower_id, provider_name, provider_call_id, state, worker_id, created_at, updated_at, lease_token, is_machine, carrier_latency_ms
 		FROM calls
 		WHERE (state IN ('RESERVED', 'INITIATED') AND updated_at <= NOW() - $1::interval)
 		   OR (state = 'ANSWERED' AND updated_at <= NOW() - $2::interval)
@@ -559,7 +732,10 @@ func (s *PostgresStore) GetStuckCalls(ctx context.Context, reservedTimeout, answ
 	var stuck []*domain.Call
 	for rows.Next() {
 		var c domain.Call
-		if err := rows.Scan(&c.ID, &c.CampaignID, &c.AgentID, &c.BorrowerID, &c.ProviderName, &c.ProviderCallID, &c.State, &c.WorkerID, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&c.ID, &c.CampaignID, &c.AgentID, &c.BorrowerID, &c.ProviderName, &c.ProviderCallID,
+			&c.State, &c.WorkerID, &c.CreatedAt, &c.UpdatedAt, &c.LeaseToken, &c.IsMachine, &c.CarrierLatencyMs,
+		); err != nil {
 			return nil, err
 		}
 		stuck = append(stuck, &c)
@@ -567,7 +743,7 @@ func (s *PostgresStore) GetStuckCalls(ctx context.Context, reservedTimeout, answ
 	return stuck, nil
 }
 
-// RecoverStuckCall safely transitions an orphaned call to FAILED and reclaims the agent.
+// RecoverStuckCall safely transitions an orphaned call to FAILED and reclaims the agent, incrementing lease_token.
 func (s *PostgresStore) RecoverStuckCall(ctx context.Context, callID uuid.UUID, reason string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -590,21 +766,21 @@ func (s *PostgresStore) RecoverStuckCall(ctx context.Context, callID uuid.UUID, 
 		return tx.Commit(ctx)
 	}
 
-	// 1. Mark call FAILED
+	// 1. Mark call FAILED and increment lease_token to invalidate zombie workers
 	_, err = tx.Exec(ctx, `
 		UPDATE calls
-		SET state = 'FAILED', updated_at = NOW()
+		SET state = 'FAILED', updated_at = NOW(), lease_token = lease_token + 1
 		WHERE id = $1;
 	`, call.ID)
 	if err != nil {
 		return err
 	}
 
-	// 2. Release Agent
+	// 2. Release Agent and increment lease_token to invalidate zombie workers
 	if call.AgentID != nil {
 		_, _ = tx.Exec(ctx, `
 			UPDATE agents
-			SET state = 'AVAILABLE', current_call_id = NULL, updated_at = NOW(), version = version + 1
+			SET state = 'AVAILABLE', current_call_id = NULL, updated_at = NOW(), version = version + 1, lease_token = lease_token + 1
 			WHERE id = $1;
 		`, *call.AgentID)
 	}

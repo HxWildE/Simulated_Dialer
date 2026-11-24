@@ -62,19 +62,26 @@ flowchart TD
 |---|---|---|
 | `cmd/dialer/main.go` | HTTP Server & Daemon | REST API server (`/api/v1`), worker pool supervisor, reaper daemon, graceful shutdown handler. |
 | `cmd/simulator/main.go` | Simulation CLI | Benchmarking tool executing Failure Cases 1–5, Scenarios A–D, and 100–1,000 agent concurrency load tests. |
-| `internal/domain/entities.go` | Domain Entities | Core structs: `Agent`, `Borrower`, `Call`, `CallEvent`, `PacingAuditLog`. |
+| `internal/domain/entities.go` | Domain Entities | Core structs: `Agent`, `Borrower`, `Call`, `CallEvent`, `PacingAuditLog` (includes `ShardID`, `LeaseToken`, `Timezone`). |
 | `internal/domain/states.go` | State Machine Guards | Explicit transition maps, numerical monotonic rankings (`CallStateRank`), out-of-order reconciliation logic. |
-| `internal/store/store.go` | Store Contract | Database interfaces, error definitions, telemetry aggregate types. |
-| `internal/store/postgres.go` | PostgreSQL Store | Atomic `SELECT ... FOR UPDATE SKIP LOCKED` reservations, idempotent event ingestion, telemetry queries, reaper recovery. |
+| `internal/store/store.go` | Store Contract | Database interfaces, error definitions (`ErrStaleFencingToken`), telemetry aggregate types. |
+| `internal/store/postgres.go` | PostgreSQL Store | Atomic `SELECT ... FOR UPDATE SKIP LOCKED` reservations, sharded bucketing, monotonic fencing tokens, idempotent ingestion. |
 | `internal/store/migrations/001_init.sql` | DDL Schema | Schema definitions, constraints, check expressions, and partial/composite indexes. |
+| `internal/store/migrations/002_robustness.sql` | Robustness DDL | Concurrency sharding, fencing tokens, TCPA timezone tracking, and Regulation F attempt columns. |
 | `internal/provider/provider.go` | Telecom Carrier | `TelecomProvider` interface, `MockProviderA` (fast/reliable), and `MockProviderB` (flaky/duplicates/out-of-order). |
+| `internal/provider/amd.go` | AMD Classifier | Answering Machine Detection decision tree classifying Human speech vs Voicemail/Carrier beep. |
+| `internal/provider/router.go` | Multi-Carrier Router | Dynamic Least-Cost Routing (LCR) with concurrent trunk hedging and adaptive circuit breakers. |
+| `internal/compliance/tcpa.go` | Compliance Gate | TCPA 8:00 AM–9:00 PM local timezone calling window, CFPB Reg F 7-in-7 weekly cap, and DNC Bloom filter. |
+| `internal/telemetry/otel.go` | OpenTelemetry Tracing | Standard OpenTelemetry W3C `traceparent` propagation across goroutines and carrier webhooks. |
+| `internal/chaos/chaos.go` | Chaos Fault Injector | Failure injection engine simulating network jitter, carrier 503 drops, and worker thread crashes. |
 | `internal/pacing/pacing.go` | Pacing Contract | `PacingEngine` interface, `PacingProposal`, and explainable `PacingRationale` models. |
 | `internal/pacing/progressive.go` | Progressive Engine | Deterministic 1:1 dialer proposing $N = \max(0, A_{\text{avail}} - C_{\text{inflight}})$. |
 | `internal/pacing/predictive.go` | Predictive Engine | Statistical Little's Law engine with Erlang-inspired buffering and expected completions. |
+| `internal/pacing/kalman.go` | 1D Kalman Filter | Recursive Kalman filter tracking dynamic borrower answer rates under regime shifts. |
 | `internal/safety/controller.go` | Safety Controller | Hard invariant enforcement: Sudden Drop Guard, Abandonment Guard, Provider Error Guard, Capacity Cap. |
 | `internal/allocator/allocator.go` | Call Allocator | Gated execution engine converting approved tickets to database locks and carrier dispatches. |
 | `internal/worker/worker.go` | Worker Pool | Concurrent worker pool (`Worker 1..N`) orchestrating dial loops. |
-| `internal/worker/reaper.go` | Stale-State Reaper | Background reclamation routine recovering hung, orphaned, or un-bridged calls. |
+| `internal/worker/reaper.go` | Stale-State Reaper | Background reclamation routine recovering hung, orphaned, or un-bridged calls with fencing tokens. |
 | `web/` | React Dashboard | React + TypeScript + Tailwind CSS (Vite) dark-mode operations dashboard. |
 
 ---
@@ -335,3 +342,34 @@ Executed on concurrent Go worker goroutines competing for PostgreSQL `SKIP LOCKE
 
 **Answer:**
 Maximum predictive utilization with deterministic progressive safety is achieved by decoupling the **capacity discovery phase** from the **execution commitment boundary**: the statistical engine is permitted to forecast future capacity aggressively using Little’s Law and Erlang-inspired completion probability buffers, but every proposed dial must pass through a strict, zero-latency **Safety Controller** that treats progressive invariants ($N = \max(0, A_{\text{avail}} - C_{\text{inflight}})$) as a hard mathematical ceiling whenever rolling abandonment exceeds 2.0%, carrier error exceeds 25%, or agent disconnection shocks occur. By combining this non-bypassable safety gate with atomic PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED` reservations and monotonic state rankings that discard out-of-order telecom webhooks, the system achieves the high throughput of predictive over-dialing while guaranteeing that physical resource commitment never regresses or exceeds regulatory abandonment constraints.
+
+---
+
+## 11. Dedicated Robustness Architecture Documents
+
+The system includes 6 dedicated deep-dive design documents addressing critical enterprise distributed systems challenges:
+
+1. [**01. Database Sharding & PgBouncer High-Concurrency Layer**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/01_DATABASE_SHARDING_AND_PGBOUNCER.md):
+   - B-Tree leaf page contention resolution via $N$-way shard bucketing.
+   - Elimination of buffer mapping spinlocks under 1,000+ workers.
+   - PgBouncer transaction-mode connection lifecycle and starvation fallback.
+2. [**02. Predictive Intelligence: 1D Kalman Filter & AMD Engine**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/02_KALMAN_FILTER_AND_AMD.md):
+   - Real-time recursive Kalman filtering tracking dynamic borrower answer rates.
+   - Dynamic measurement noise scaling ($R \propto 1/\sqrt{N}$) preventing over-dial spikes.
+   - Answering Machine Detection (AMD) acoustic energy decision tree (Human vs Voicemail).
+3. [**03. Multi-Carrier Trunk Hedging & Dynamic LCR**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/03_MULTI_CARRIER_LCR_AND_CIRCUIT_BREAKER.md):
+   - Least-Cost Routing (LCR) sorting trunks by commercial cost-per-minute rate cards.
+   - Concurrent trunk hedging on primary stall (>1200ms) or immediate SIP 503 error.
+   - Per-trunk adaptive circuit breakers (`CLOSED` &rarr; `OPEN` &rarr; `HALF-OPEN`).
+4. [**04. Distributed Leases with Monotonic Fencing Tokens**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/04_DISTRIBUTED_LEASES_AND_FENCING_TOKENS.md):
+   - Mathematical solution to the classic "Zombie Worker" GC pause split-brain problem.
+   - Monotonic `lease_token BIGINT` incremented on every reservation and reaper reset.
+   - Strict rejection of stale writes via `ErrStaleFencingToken`.
+5. [**05. TCPA & Regulation F Compliance Gate**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/05_TCPA_AND_REGULATION_F_COMPLIANCE.md):
+   - Local IANA timezone calling window engine enforcing the TCPA 8:00 AM–9:00 PM rule.
+   - CFPB Regulation F (12 CFR § 1006.14) 7-in-7 rolling weekly attempt cap and conversation wait.
+   - High-throughput in-memory Do-Not-Call (DNC) Bloom filter scrubber.
+6. [**06. Observability: OpenTelemetry Tracing & Chaos Test Harness**](file:///c:/Users/harsh/OneDrive/Documents/Desktop/finalProject/docs/06_OBSERVABILITY_TRACING_AND_CHAOS.md):
+   - Zero-dependency W3C `traceparent` context propagation across goroutines and carrier webhooks.
+   - Chaos engineering fault injector simulating network jitter, carrier 503s, and worker panics.
+

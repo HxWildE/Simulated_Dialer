@@ -18,6 +18,7 @@ var (
 	ErrBorrowerNotFound    = errors.New("borrower not found")
 	ErrOptimisticLockFail  = errors.New("optimistic lock failure")
 	ErrDuplicateEventFound = errors.New("duplicate event already processed")
+	ErrStaleFencingToken   = errors.New("stale fencing token: call was reclaimed or reassigned")
 )
 
 // PacingMetrics contains real-time aggregates needed by Pacing and Safety Controllers.
@@ -44,8 +45,16 @@ type Store interface {
 	// using SELECT ... FOR UPDATE SKIP LOCKED and creates a RESERVED call record.
 	ReserveAgentAndBorrower(ctx context.Context, campaignID uuid.UUID, workerID, providerName string) (*domain.Call, *domain.Agent, *domain.Borrower, error)
 
+	// ReserveAgentAndBorrowerSharded reserves within a partition shard to eliminate B-tree lock contention,
+	// incrementing and assigning monotonic lease_tokens.
+	ReserveAgentAndBorrowerSharded(ctx context.Context, campaignID uuid.UUID, workerID, providerName string, shardID int) (*domain.Call, *domain.Agent, *domain.Borrower, error)
+
 	// ProcessProviderEvent idempotently logs the event and reconciles Call & Agent states.
 	ProcessProviderEvent(ctx context.Context, event domain.CallEvent) error
+
+	// ProcessProviderEventWithFencing validates monotonic fencing tokens before mutating state,
+	// preventing split-brain writes from delayed/zombie workers.
+	ProcessProviderEventWithFencing(ctx context.Context, event domain.CallEvent, expectedLeaseToken int64) error
 
 	// RecordPacingAudit records a Safety Controller audit entry.
 	RecordPacingAudit(ctx context.Context, audit domain.PacingAuditLog) error
