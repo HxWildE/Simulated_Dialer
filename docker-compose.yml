@@ -23,7 +23,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: smartdialer-service
+    container_name: smartdialer-backend
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,6 +32,17 @@ services:
       PORT: "8080"
     ports:
       - "8080:8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: smartdialer-frontend
+    depends_on:
+      - dialer
+    ports:
+      - "3000:80"
     restart: unless-stopped
 
   simulator:

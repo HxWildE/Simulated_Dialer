@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +22,24 @@ import (
 	"smartdialer/internal/safety"
 	"smartdialer/internal/store"
 	"smartdialer/internal/worker"
+)
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+var (
+	simMu      sync.Mutex
+	simRunning bool
 )
 
 func main() {
@@ -87,6 +107,10 @@ func main() {
 	// Launch Reaper
 	go reaper.Start(ctx)
 
+	// Active campaign tracking
+	var activeCampaignID = uuid.New()
+	var currentMode = "PROGRESSIVE"
+
 	// 5. HTTP Router
 	mux := http.NewServeMux()
 
@@ -101,7 +125,165 @@ func main() {
 		})
 	})
 
-	// Create Agent
+	// --------------------------------------------------------------------------------------------
+	// V1 API Endpoints for Frontend Dashboard
+	// --------------------------------------------------------------------------------------------
+
+	// GET /api/v1/metrics/live: Real-time agent state grid, active calls, answer rate, safety decisions
+	mux.HandleFunc("GET /api/v1/metrics/live", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Query agent state breakdown
+		var available, reserved, dialing, connected, wrapUp, paused, offline int
+		_ = pool.QueryRow(r.Context(), `
+			SELECT 
+				COALESCE(COUNT(*) FILTER (WHERE state = 'AVAILABLE'), 0),
+				COALESCE(COUNT(*) FILTER (WHERE state = 'RESERVED'), 0),
+				COALESCE(COUNT(*) FILTER (WHERE state = 'DIALING'), 0),
+				COALESCE(COUNT(*) FILTER (WHERE state = 'CONNECTED'), 0),
+				COALESCE(COUNT(*) FILTER (WHERE state = 'WRAP_UP'), 0),
+				COALESCE(COUNT(*) FILTER (WHERE state = 'PAUSED'), 0),
+				COALESCE(COUNT(*) FILTER (WHERE state = 'OFFLINE'), 0)
+			FROM agents;
+		`).Scan(&available, &reserved, &dialing, &connected, &wrapUp, &paused, &offline)
+
+		metrics, _ := st.GetPacingMetrics(r.Context(), activeCampaignID)
+		stats := workerPool.Stats()
+
+		// Circuit Breaker logic
+		circuitBreaker := "CLOSED"
+		if metrics != nil && metrics.ProviderErrorRate > 0.25 {
+			circuitBreaker = "OPEN"
+		} else if metrics != nil && metrics.RollingAbandonmentRate > 0.02 {
+			circuitBreaker = "HALF-OPEN"
+		}
+
+		// Fetch recent safety audit decisions
+		rows, _ := pool.Query(r.Context(), `
+			SELECT id, mode, proposed_calls, approved_calls, decision, reason, timestamp
+			FROM pacing_audit_logs
+			ORDER BY timestamp DESC
+			LIMIT 15;
+		`)
+		var recentDecisions []map[string]any
+		if rows != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id uuid.UUID
+				var mode, decision, reason string
+				var prop, app int
+				var ts time.Time
+				if err := rows.Scan(&id, &mode, &prop, &app, &decision, &reason, &ts); err == nil {
+					recentDecisions = append(recentDecisions, map[string]any{
+						"id":             id,
+						"mode":           mode,
+						"proposed_calls": prop,
+						"approved_calls": app,
+						"decision":       decision,
+						"reason":         reason,
+						"timestamp":      ts,
+					})
+				}
+			}
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"timestamp": time.Now().UTC(),
+			"mode":      currentMode,
+			"agent_states": map[string]int{
+				"AVAILABLE": available,
+				"RESERVED":  reserved,
+				"DIALING":   dialing,
+				"CONNECTED": connected,
+				"WRAP_UP":   wrapUp,
+				"PAUSED":    paused,
+				"OFFLINE":   offline,
+				"TOTAL":     available + reserved + dialing + connected + wrapUp + paused + offline,
+			},
+			"active_calls": map[string]int{
+				"connected": metrics.ConnectedCalls,
+				"ringing":   metrics.RingingCalls,
+				"in_flight": metrics.InFlightCalls,
+			},
+			"telemetry": map[string]float64{
+				"rolling_answer_rate":      metrics.RollingAnswerRate,
+				"rolling_abandonment_rate": metrics.RollingAbandonmentRate,
+				"provider_error_rate":      metrics.ProviderErrorRate,
+				"agent_drop_rate_5s":       metrics.AgentDropRateLast5s,
+			},
+			"circuit_breaker":  circuitBreaker,
+			"worker_stats":     stats,
+			"recent_decisions": recentDecisions,
+		})
+	})
+
+	// POST /api/v1/simulator/run: Triggers simulation execution
+	mux.HandleFunc("POST /api/v1/simulator/run", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		simMu.Lock()
+		if simRunning {
+			simMu.Unlock()
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "simulation is already running"})
+			return
+		}
+		simRunning = true
+		simMu.Unlock()
+
+		var req struct {
+			Target string `json:"target"` // "all", "scenarios", "failures", "load"
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Target == "" {
+			req.Target = "all"
+		}
+
+		go func(target string) {
+			defer func() {
+				simMu.Lock()
+				simRunning = false
+				simMu.Unlock()
+			}()
+
+			flagArg := "--" + target
+			cmd := exec.Command("go", "run", "cmd/simulator/main.go", flagArg)
+			cmd.Env = os.Environ()
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				slog.Error("simulation run failed", "err", err, "out", string(out))
+			} else {
+				slog.Info("simulation run completed successfully", "target", target)
+			}
+		}(req.Target)
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":  "started",
+			"target":  req.Target,
+			"message": "simulation started in background",
+		})
+	})
+
+	// GET /api/v1/simulator/results: Returns latest simulation results JSON
+	mux.HandleFunc("GET /api/v1/simulator/results", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		data, err := os.ReadFile("simulation_results.json")
+		if err != nil {
+			// Try web public folder
+			data, err = os.ReadFile("web/public/simulation_results.json")
+			if err != nil {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "simulation_results.json not found yet; please run simulator first"})
+				return
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	})
+
+	// Agent & Borrower Management
 	mux.HandleFunc("POST /api/agents", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name  string            `json:"name"`
@@ -123,7 +305,6 @@ func main() {
 		_ = json.NewEncoder(w).Encode(agent)
 	})
 
-	// Create Borrower Lead
 	mux.HandleFunc("POST /api/borrowers", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			PhoneNumber string `json:"phone_number"`
@@ -141,7 +322,6 @@ func main() {
 		_ = json.NewEncoder(w).Encode(borrower)
 	})
 
-	// Start Campaign
 	mux.HandleFunc("POST /api/campaigns/start", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			CampaignID string `json:"campaign_id"`
@@ -155,10 +335,13 @@ func main() {
 				campUUID = parsed
 			}
 		}
+		activeCampaignID = campUUID
 
 		if req.Mode == "PREDICTIVE" {
+			currentMode = "PREDICTIVE"
 			workerPool.SetEngine(predictiveEngine)
 		} else {
+			currentMode = "PROGRESSIVE"
 			workerPool.SetEngine(progressiveEngine)
 		}
 
@@ -166,17 +349,15 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"message":     "campaign dialer started",
 			"campaign_id": campUUID,
-			"mode":        req.Mode,
+			"mode":        currentMode,
 		})
 	})
 
-	// Stop Campaign
 	mux.HandleFunc("POST /api/campaigns/stop", func(w http.ResponseWriter, r *http.Request) {
 		workerPool.Stop()
 		_ = json.NewEncoder(w).Encode(map[string]string{"message": "campaign dialer stopped"})
 	})
 
-	// Webhook Ingestion
 	mux.HandleFunc("POST /api/webhooks/{provider}", func(w http.ResponseWriter, r *http.Request) {
 		var event domain.CallEvent
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
@@ -198,26 +379,9 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "processed"})
 	})
 
-	// Metrics
-	mux.HandleFunc("GET /api/metrics", func(w http.ResponseWriter, r *http.Request) {
-		campStr := r.URL.Query().Get("campaign_id")
-		campID := uuid.Nil
-		if campStr != "" {
-			campID, _ = uuid.Parse(campStr)
-		}
-
-		metrics, _ := st.GetPacingMetrics(r.Context(), campID)
-		stats := workerPool.Stats()
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"pacing_metrics": metrics,
-			"worker_stats":   stats,
-		})
-	})
-
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      withCORS(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
