@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-24T14:07:53.3639631Z",
+  "generated_at": "2026-11-24T16:00:50.8223759Z",
   "scenarios": [
     {
       "name": "Scenario A (20% Ans, 120s Talk)",
@@ -7,27 +7,27 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 78,
-        "calls_connected": 17,
-        "abandoned_calls": 63,
+        "calls_initiated": 79,
+        "calls_connected": 16,
+        "abandoned_calls": 64,
         "abandonment_pct": 0,
-        "agent_util_pct": 47.599999999999994,
-        "approve_count": 44,
+        "agent_util_pct": 44.8,
+        "approve_count": 36,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
       },
       "predictive": {
         "mode": "PREDICTIVE",
-        "calls_initiated": 68,
-        "calls_connected": 17,
-        "abandoned_calls": 49,
+        "calls_initiated": 79,
+        "calls_connected": 15,
+        "abandoned_calls": 65,
         "abandonment_pct": 2.5,
-        "agent_util_pct": 61.2,
+        "agent_util_pct": 54,
         "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 36
+        "fallback_count": 40
       }
     },
     {
@@ -36,12 +36,41 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 37,
+        "calls_initiated": 46,
         "calls_connected": 20,
-        "abandoned_calls": 17,
+        "abandoned_calls": 27,
         "abandonment_pct": 0,
         "agent_util_pct": 56,
-        "approve_count": 16,
+        "approve_count": 32,
+        "reduce_count": 0,
+        "reject_count": 0,
+        "fallback_count": 0
+      },
+      "predictive": {
+        "mode": "PREDICTIVE",
+        "calls_initiated": 47,
+        "calls_connected": 20,
+        "abandoned_calls": 27,
+        "abandonment_pct": 2.5,
+        "agent_util_pct": 72,
+        "approve_count": 4,
+        "reduce_count": 0,
+        "reject_count": 0,
+        "fallback_count": 16
+      }
+    },
+    {
+      "name": "Scenario C (70% Ans, 180s Talk)",
+      "answer_rate": 0.7,
+      "talk_time_sec": 0,
+      "progressive": {
+        "mode": "PROGRESSIVE",
+        "calls_initiated": 24,
+        "calls_connected": 20,
+        "abandoned_calls": 4,
+        "abandonment_pct": 0,
+        "agent_util_pct": 56,
+        "approve_count": 8,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
@@ -56,36 +85,7 @@
         "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 12
-      }
-    },
-    {
-      "name": "Scenario C (70% Ans, 180s Talk)",
-      "answer_rate": 0.7,
-      "talk_time_sec": 0,
-      "progressive": {
-        "mode": "PROGRESSIVE",
-        "calls_initiated": 28,
-        "calls_connected": 20,
-        "abandoned_calls": 8,
-        "abandonment_pct": 0,
-        "agent_util_pct": 56,
-        "approve_count": 12,
-        "reduce_count": 0,
-        "reject_count": 0,
-        "fallback_count": 0
-      },
-      "predictive": {
-        "mode": "PREDICTIVE",
-        "calls_initiated": 30,
-        "calls_connected": 20,
-        "abandoned_calls": 10,
-        "abandonment_pct": 2.5,
-        "agent_util_pct": 72,
-        "approve_count": 4,
-        "reduce_count": 0,
-        "reject_count": 0,
-        "fallback_count": 12
+        "fallback_count": 8
       }
     },
     {
@@ -94,27 +94,27 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 26,
+        "calls_initiated": 33,
         "calls_connected": 20,
-        "abandoned_calls": 6,
+        "abandoned_calls": 13,
         "abandonment_pct": 0,
         "agent_util_pct": 56,
-        "approve_count": 16,
+        "approve_count": 21,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
       },
       "predictive": {
         "mode": "PREDICTIVE",
-        "calls_initiated": 32,
+        "calls_initiated": 31,
         "calls_connected": 20,
-        "abandoned_calls": 22,
+        "abandoned_calls": 21,
         "abandonment_pct": 2.5,
         "agent_util_pct": 72,
         "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 8
+        "fallback_count": 12
       }
     }
   ],
@@ -136,7 +136,7 @@
     {
       "seconds": 0.8,
       "answer_rate_pct": 70,
-      "ringing_calls": 0,
+      "ringing_calls": 6,
       "connected": 0,
       "mode": "PREDICTIVE"
     },
@@ -157,7 +157,7 @@
     {
       "seconds": 1.5,
       "answer_rate_pct": 10,
-      "ringing_calls": 0,
+      "ringing_calls": 1,
       "connected": 0,
       "mode": "PROGRESSIVE_FALLBACK",
       "event": "SAFETY TRIGGER: FALLBACK_TO_PROGRESSIVE"
@@ -211,13 +211,6 @@
       "ringing_calls": 0,
       "connected": 0,
       "mode": "PROGRESSIVE_FALLBACK"
-    },
-    {
-      "seconds": 3.5,
-      "answer_rate_pct": 10,
-      "ringing_calls": 0,
-      "connected": 0,
-      "mode": "PROGRESSIVE_FALLBACK"
     }
   ],
   "failure_cases": [
@@ -264,33 +257,33 @@
         "workers": 100,
         "successful_reservations": 100,
         "double_allocations": 0,
-        "throughput_rps": 90.6,
-        "total_duration_ms": 1104,
-        "p50_ms": 95.7,
-        "p95_ms": 1053,
-        "p99_ms": 1098.9
+        "throughput_rps": 149,
+        "total_duration_ms": 671,
+        "p50_ms": 182.9,
+        "p95_ms": 641.6,
+        "p99_ms": 655.7
       },
       {
         "workers": 500,
         "successful_reservations": 500,
         "double_allocations": 0,
-        "throughput_rps": 1878.5,
-        "total_duration_ms": 266,
-        "p50_ms": 156,
-        "p95_ms": 250.3,
-        "p99_ms": 256.6
+        "throughput_rps": 3119.5,
+        "total_duration_ms": 160,
+        "p50_ms": 89.2,
+        "p95_ms": 142.9,
+        "p99_ms": 146.6
       },
       {
         "workers": 1000,
         "successful_reservations": 1000,
         "double_allocations": 0,
-        "throughput_rps": 1057.1,
-        "total_duration_ms": 945,
-        "p50_ms": 421.4,
-        "p95_ms": 909.4,
-        "p99_ms": 927.6
+        "throughput_rps": 1788.7,
+        "total_duration_ms": 559,
+        "p50_ms": 371.4,
+        "p95_ms": 530.9,
+        "p99_ms": 531.4
       }
     ],
-    "p99_latency": "927.65ms"
+    "p99_latency": "531.41ms"
   }
 }
