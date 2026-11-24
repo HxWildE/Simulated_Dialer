@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-24T16:00:50.8223759Z",
+  "generated_at": "2026-11-24T18:11:26.9786089Z",
   "scenarios": [
     {
       "name": "Scenario A (20% Ans, 120s Talk)",
@@ -257,33 +257,33 @@
         "workers": 100,
         "successful_reservations": 100,
         "double_allocations": 0,
-        "throughput_rps": 149,
-        "total_duration_ms": 671,
-        "p50_ms": 182.9,
-        "p95_ms": 641.6,
-        "p99_ms": 655.7
+        "throughput_rps": 125.6,
+        "total_duration_ms": 796,
+        "p50_ms": 206.7,
+        "p95_ms": 770.1,
+        "p99_ms": 792
       },
       {
         "workers": 500,
         "successful_reservations": 500,
         "double_allocations": 0,
-        "throughput_rps": 3119.5,
-        "total_duration_ms": 160,
-        "p50_ms": 89.2,
-        "p95_ms": 142.9,
-        "p99_ms": 146.6
+        "throughput_rps": 2140.7,
+        "total_duration_ms": 233,
+        "p50_ms": 86.8,
+        "p95_ms": 170.6,
+        "p99_ms": 170.6
       },
       {
         "workers": 1000,
         "successful_reservations": 1000,
         "double_allocations": 0,
-        "throughput_rps": 1788.7,
-        "total_duration_ms": 559,
-        "p50_ms": 371.4,
-        "p95_ms": 530.9,
-        "p99_ms": 531.4
+        "throughput_rps": 2665.8,
+        "total_duration_ms": 375,
+        "p50_ms": 202.1,
+        "p95_ms": 338.6,
+        "p99_ms": 345.8
       }
     ],
-    "p99_latency": "531.41ms"
+    "p99_latency": "345.80ms"
   }
 }
