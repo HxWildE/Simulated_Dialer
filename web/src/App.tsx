@@ -138,7 +138,21 @@ export default function App() {
       const res = await fetch('/api/v1/simulator/results');
       if (res.ok) {
         const data: FullSimulationExport = await res.json();
-        setSimData(data);
+        setSimData({
+          generated_at: data?.generated_at || defaultSimulationData.generated_at,
+          scenarios: Array.isArray(data?.scenarios) && data.scenarios.length > 0 
+            ? data.scenarios 
+            : defaultSimulationData.scenarios,
+          scenario_d_timeline: Array.isArray(data?.scenario_d_timeline) && data.scenario_d_timeline.length > 0 
+            ? data.scenario_d_timeline 
+            : defaultSimulationData.scenario_d_timeline,
+          failure_cases: Array.isArray(data?.failure_cases) && data.failure_cases.length > 0 
+            ? data.failure_cases 
+            : defaultSimulationData.failure_cases,
+          load_test: data?.load_test && Array.isArray(data.load_test.levels) 
+            ? data.load_test 
+            : defaultSimulationData.load_test,
+        });
       }
     } catch {
       // Fallback to default simulation data
@@ -549,7 +563,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/60 font-mono">
-                  {simData.scenarios.map((sc: ScenarioComparison, idx: number) => (
+                  {(simData?.scenarios || defaultSimulationData.scenarios).map((sc: ScenarioComparison, idx: number) => (
                     <React.Fragment key={idx}>
                       {/* Progressive Row */}
                       <tr className="bg-gray-900/20 hover:bg-gray-800/30 transition">
@@ -625,7 +639,7 @@ export default function App() {
 
               {/* Timeline Step Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
-                {simData.scenario_d_timeline.map((pt: any, i: number) => (
+                {(simData?.scenario_d_timeline || defaultSimulationData.scenario_d_timeline).map((pt: any, i: number) => (
                   <div 
                     key={i} 
                     className={`p-3 rounded-lg border flex flex-col justify-between text-xs transition ${
@@ -687,7 +701,7 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {simData.failure_cases.map((fc: any) => (
+                {(simData?.failure_cases || defaultSimulationData.failure_cases).map((fc: any) => (
                   <div key={fc.id} className="bg-gray-900/60 border border-gray-800 rounded-xl p-4 flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between mb-2">
@@ -720,7 +734,7 @@ export default function App() {
                   </h2>
                 </div>
                 <span className="text-xs text-cyan-300 font-mono bg-cyan-950/60 border border-cyan-800/60 px-3 py-1 rounded">
-                  Overall p99 Latency: {simData.load_test.p99_latency}
+                  Overall p99 Latency: {simData?.load_test?.p99_latency || defaultSimulationData.load_test.p99_latency}
                 </span>
               </div>
 
@@ -738,7 +752,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-800/60 font-mono text-gray-300">
-                    {simData.load_test.levels.map((lvl: any, i: number) => (
+                    {(simData?.load_test?.levels || defaultSimulationData.load_test.levels).map((lvl: any, i: number) => (
                       <tr key={i} className="hover:bg-gray-800/30 transition">
                         <td className="py-3 px-3.5 font-bold text-white">{lvl.workers} Workers</td>
                         <td className="py-3 px-3 text-right text-emerald-400 font-bold">{lvl.successful_reservations} / {lvl.workers}</td>

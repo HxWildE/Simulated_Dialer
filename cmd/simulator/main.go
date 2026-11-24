@@ -167,6 +167,25 @@ func main() {
 }
 
 func saveSimulationResults(export FullSimulationExport) {
+	// If existing results exist, merge to avoid erasing other sections on partial runs
+	if existingData, err := os.ReadFile("simulation_results.json"); err == nil {
+		var existing FullSimulationExport
+		if err := json.Unmarshal(existingData, &existing); err == nil {
+			if export.Scenarios == nil && existing.Scenarios != nil {
+				export.Scenarios = existing.Scenarios
+			}
+			if export.ScenarioDTimeline == nil && existing.ScenarioDTimeline != nil {
+				export.ScenarioDTimeline = existing.ScenarioDTimeline
+			}
+			if export.FailureCases == nil && existing.FailureCases != nil {
+				export.FailureCases = existing.FailureCases
+			}
+			if export.LoadTest.Levels == nil && existing.LoadTest.Levels != nil {
+				export.LoadTest = existing.LoadTest
+			}
+		}
+	}
+
 	data, err := json.MarshalIndent(export, "", "  ")
 	if err != nil {
 		fmt.Printf("⚠️ Failed to serialize simulation results: %v\n", err)

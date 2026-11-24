@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-24T13:23:54.5158467Z",
+  "generated_at": "2026-11-24T14:07:53.3639631Z",
   "scenarios": [
     {
       "name": "Scenario A (20% Ans, 120s Talk)",
@@ -7,27 +7,27 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 52,
-        "calls_connected": 5,
-        "abandoned_calls": 35,
+        "calls_initiated": 78,
+        "calls_connected": 17,
+        "abandoned_calls": 63,
         "abandonment_pct": 0,
-        "agent_util_pct": 14,
-        "approve_count": 4,
+        "agent_util_pct": 47.599999999999994,
+        "approve_count": 44,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
       },
       "predictive": {
         "mode": "PREDICTIVE",
-        "calls_initiated": 79,
-        "calls_connected": 18,
-        "abandoned_calls": 59,
+        "calls_initiated": 68,
+        "calls_connected": 17,
+        "abandoned_calls": 49,
         "abandonment_pct": 2.5,
-        "agent_util_pct": 64.8,
+        "agent_util_pct": 61.2,
         "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 26
+        "fallback_count": 36
       }
     },
     {
@@ -36,27 +36,27 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 39,
+        "calls_initiated": 37,
         "calls_connected": 20,
-        "abandoned_calls": 19,
+        "abandoned_calls": 17,
         "abandonment_pct": 0,
         "agent_util_pct": 56,
-        "approve_count": 28,
+        "approve_count": 16,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
       },
       "predictive": {
         "mode": "PREDICTIVE",
-        "calls_initiated": 32,
-        "calls_connected": 12,
-        "abandoned_calls": 13,
+        "calls_initiated": 31,
+        "calls_connected": 20,
+        "abandoned_calls": 11,
         "abandonment_pct": 2.5,
-        "agent_util_pct": 43.2,
-        "approve_count": 5,
+        "agent_util_pct": 72,
+        "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 3
+        "fallback_count": 12
       }
     },
     {
@@ -65,27 +65,27 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 26,
+        "calls_initiated": 28,
         "calls_connected": 20,
-        "abandoned_calls": 7,
+        "abandoned_calls": 8,
         "abandonment_pct": 0,
         "agent_util_pct": 56,
-        "approve_count": 8,
+        "approve_count": 12,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
       },
       "predictive": {
         "mode": "PREDICTIVE",
-        "calls_initiated": 26,
-        "calls_connected": 16,
-        "abandoned_calls": 7,
+        "calls_initiated": 30,
+        "calls_connected": 20,
+        "abandoned_calls": 10,
         "abandonment_pct": 2.5,
-        "agent_util_pct": 57.6,
+        "agent_util_pct": 72,
         "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 0
+        "fallback_count": 12
       }
     },
     {
@@ -94,27 +94,27 @@
       "talk_time_sec": 0,
       "progressive": {
         "mode": "PROGRESSIVE",
-        "calls_initiated": 32,
+        "calls_initiated": 26,
         "calls_connected": 20,
-        "abandoned_calls": 12,
+        "abandoned_calls": 6,
         "abandonment_pct": 0,
         "agent_util_pct": 56,
-        "approve_count": 8,
+        "approve_count": 16,
         "reduce_count": 0,
         "reject_count": 0,
         "fallback_count": 0
       },
       "predictive": {
         "mode": "PREDICTIVE",
-        "calls_initiated": 33,
+        "calls_initiated": 32,
         "calls_connected": 20,
-        "abandoned_calls": 23,
+        "abandoned_calls": 22,
         "abandonment_pct": 2.5,
         "agent_util_pct": 72,
         "approve_count": 4,
         "reduce_count": 0,
         "reject_count": 0,
-        "fallback_count": 12
+        "fallback_count": 8
       }
     }
   ],
@@ -129,14 +129,14 @@
     {
       "seconds": 0.5,
       "answer_rate_pct": 70,
-      "ringing_calls": 1,
+      "ringing_calls": 5,
       "connected": 0,
       "mode": "PREDICTIVE"
     },
     {
       "seconds": 0.8,
       "answer_rate_pct": 70,
-      "ringing_calls": 6,
+      "ringing_calls": 0,
       "connected": 0,
       "mode": "PREDICTIVE"
     },
@@ -165,7 +165,7 @@
     {
       "seconds": 1.8,
       "answer_rate_pct": 10,
-      "ringing_calls": 2,
+      "ringing_calls": 0,
       "connected": 0,
       "mode": "PROGRESSIVE_FALLBACK",
       "event": "SAFETY TRIGGER: FALLBACK_TO_PROGRESSIVE"
@@ -264,33 +264,33 @@
         "workers": 100,
         "successful_reservations": 100,
         "double_allocations": 0,
-        "throughput_rps": 92.5,
-        "total_duration_ms": 1080,
-        "p50_ms": 410.6,
-        "p95_ms": 999.7,
-        "p99_ms": 1051
+        "throughput_rps": 90.6,
+        "total_duration_ms": 1104,
+        "p50_ms": 95.7,
+        "p95_ms": 1053,
+        "p99_ms": 1098.9
       },
       {
         "workers": 500,
         "successful_reservations": 500,
         "double_allocations": 0,
-        "throughput_rps": 1461.3,
-        "total_duration_ms": 342,
-        "p50_ms": 152.2,
-        "p95_ms": 288.6,
-        "p99_ms": 331.4
+        "throughput_rps": 1878.5,
+        "total_duration_ms": 266,
+        "p50_ms": 156,
+        "p95_ms": 250.3,
+        "p99_ms": 256.6
       },
       {
         "workers": 1000,
         "successful_reservations": 1000,
         "double_allocations": 0,
-        "throughput_rps": 526.3,
-        "total_duration_ms": 1899,
-        "p50_ms": 1205,
-        "p95_ms": 1841.9,
-        "p99_ms": 1890.5
+        "throughput_rps": 1057.1,
+        "total_duration_ms": 945,
+        "p50_ms": 421.4,
+        "p95_ms": 909.4,
+        "p99_ms": 927.6
       }
     ],
-    "p99_latency": "1890.54ms"
+    "p99_latency": "927.65ms"
   }
 }
