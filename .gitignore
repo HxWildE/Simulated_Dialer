@@ -66,3 +66,8 @@ ehthumbs.db
 Thumbs.db
 [Dd]esktop.ini
 ~$*
+
+# Local Documentation & Deep Dive (Keep off GitHub)
+docs/
+deep_dive/
+
