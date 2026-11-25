@@ -33,7 +33,17 @@ SmartDialer is a zero-bloat, high-concurrency outbound debt collections dialing 
 
 ---
 
-## 6 Enterprise Robustness Upgrades (Dedicated Documentation)
+## 📚 Documentation & System Design Guides
+
+| Guide | Description |
+|---|---|
+| [**System Mastery & Deep Dive**](deep_dive/) | **5-Part Comprehensive Guide**: Big Picture, Components & Data Flow, State Machines, Mathematics & Safety, and System Design Interview Cheatsheet. |
+| [**Submission Document**](SUBMISSION.md) | Official assignment submission mapping, ADR, 7 discussion questions, and load test verification. |
+| [**Setup & Run Guide**](SETUP_GUIDE.md) | Step-by-step local & Docker setup guide for new developers and evaluators. |
+| [**Architecture Deep Dive**](docs/ARCHITECTURE.md) | Complete architectural breakdown and failure handling. |
+| [**Enterprise Robustness Specs**](docs/) | 6 production specifications (Sharding, Kalman Filter, LCR, Fencing Tokens, TCPA, Chaos). |
+
+---
 
 In addition to core progressive and predictive pacing, the platform includes 6 enterprise-grade robustness modules, each documented with problem statements, mathematical foundations, code breakdowns, and test verifications:
 
