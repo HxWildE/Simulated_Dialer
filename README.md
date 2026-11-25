@@ -156,3 +156,4 @@ npm run dev
 - `POST /api/campaigns/start` - Start dialer worker pool (`mode`: `PROGRESSIVE` or `PREDICTIVE`)
 - `POST /api/campaigns/stop` - Stop dialer worker pool
 - `POST /api/webhooks/{provider}` - Ingest asynchronous carrier events (`INITIATED`, `RINGING`, `ANSWERED`, `COMPLETED`, `FAILED`)
+# Simulated_Dialer
